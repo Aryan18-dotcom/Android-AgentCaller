@@ -9,7 +9,7 @@ data class CallNote(
     val id: Long,
     val callerNumber: String,
     val timestampMs: Long,
-    val category: String, // "Urgent", "Callback", "General"
+    val category: String,
     val summary: String,
     val transcript: String
 )
@@ -17,10 +17,9 @@ data class CallNote(
 object Storage {
     private const val PREF_NAME = "direct_sim_assistant_prefs"
     private const val KEY_ENABLED = "assistant_enabled"
-    private const val KEY_DELAY_SEC = "auto_answer_delay_sec"
+    private const val KEY_FORWARD_NUMBER = "voip_forward_number"
+    private const val KEY_BACKEND_URL = "backend_notes_url"
     private const val KEY_GREETING = "greeting_message"
-    private const val KEY_API_KEY = "llm_api_key"
-    private const val KEY_SYSTEM_PROMPT = "system_prompt"
     private const val KEY_CALL_NOTES = "call_notes_json"
 
     private fun prefs(context: Context): SharedPreferences {
@@ -35,18 +34,26 @@ object Storage {
         prefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
     }
 
-    fun getAutoAnswerDelaySec(context: Context): Int {
-        return prefs(context).getInt(KEY_DELAY_SEC, 2)
+    fun getForwardNumber(context: Context): String {
+        return prefs(context).getString(KEY_FORWARD_NUMBER, "") ?: ""
     }
 
-    fun setAutoAnswerDelaySec(context: Context, seconds: Int) {
-        prefs(context).edit().putInt(KEY_DELAY_SEC, seconds.coerceIn(0, 15)).apply()
+    fun setForwardNumber(context: Context, number: String) {
+        prefs(context).edit().putString(KEY_FORWARD_NUMBER, number.trim()).apply()
+    }
+
+    fun getBackendUrl(context: Context): String {
+        return prefs(context).getString(KEY_BACKEND_URL, "") ?: ""
+    }
+
+    fun setBackendUrl(context: Context, url: String) {
+        prefs(context).edit().putString(KEY_BACKEND_URL, url.trim()).apply()
     }
 
     fun getGreetingMessage(context: Context): String {
         return prefs(context).getString(
             KEY_GREETING,
-            "Hello! Aryan is unavailable right now and I am his AI assistant. Please tell me your name and why you are calling."
+            "Hello! Aryan is in a meeting right now and I am his AI assistant. Please leave your name and message."
         ) ?: "Hello! How can I help you?"
     }
 
@@ -54,27 +61,9 @@ object Storage {
         prefs(context).edit().putString(KEY_GREETING, greeting.trim()).apply()
     }
 
-    fun getApiKey(context: Context): String {
-        return prefs(context).getString(KEY_API_KEY, "") ?: ""
-    }
-
-    fun setApiKey(context: Context, apiKey: String) {
-        prefs(context).edit().putString(KEY_API_KEY, apiKey.trim()).apply()
-    }
-
-    fun getSystemPrompt(context: Context): String {
-        return prefs(context).getString(
-            KEY_SYSTEM_PROMPT,
-            "You are Aryan's personal phone assistant. Keep replies polite, natural, and under 2 sentences."
-        ) ?: ""
-    }
-
-    fun setSystemPrompt(context: Context, prompt: String) {
-        prefs(context).edit().putString(KEY_SYSTEM_PROMPT, prompt.trim()).apply()
-    }
-
     fun saveCallNote(context: Context, note: CallNote) {
         val current = getCallNotes(context).toMutableList()
+        if (current.any { it.id == note.id }) return
         current.add(0, note)
         persistNotes(context, current)
     }

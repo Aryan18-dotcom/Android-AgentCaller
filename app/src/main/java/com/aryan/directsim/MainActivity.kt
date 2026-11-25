@@ -1,19 +1,17 @@
 package com.aryan.directsim
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.role.RoleManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.speech.tts.TextToSpeech
 import android.telecom.TelecomManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -33,7 +31,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -57,10 +54,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,30 +68,24 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
-    private var testTts: TextToSpeech? = null
     private var resumeTick by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-
-        testTts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                testTts?.language = Locale.US
-                testTts?.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-            }
-        }
 
         setContent {
             val neutralDarkColors = darkColorScheme(
@@ -109,20 +102,7 @@ class MainActivity : ComponentActivity() {
             )
 
             MaterialTheme(colorScheme = neutralDarkColors) {
-                DirectSimApp(
-                    resumeTick = resumeTick,
-                    onTestSpeak = { text ->
-                        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                        @Suppress("DEPRECATION")
-                        am.isSpeakerphoneOn = true
-                        am.setStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            am.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
-                            0
-                        )
-                        testTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "TEST_TTS")
-                    }
-                )
+                DirectSimApp(resumeTick = resumeTick)
             }
         }
     }
@@ -130,12 +110,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumeTick++
-    }
-
-    override fun onDestroy() {
-        testTts?.stop()
-        testTts?.shutdown()
-        super.onDestroy()
     }
 }
 
@@ -158,16 +132,78 @@ private fun getMissingRuntimePermissions(context: Context): List<String> {
     return required.filter { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
 }
 
+@SuppressLint("MissingPermission")
+private fun triggerCarrierMmiCode(context: Context, mmiCode: String) {
+    try {
+        val telecom = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+        val uri = Uri.fromParts("tel", mmiCode, null)
+        telecom.placeCall(uri, Bundle())
+    } catch (e: Exception) {
+        Toast.makeText(context, "Dial $mmiCode to update forwarding", Toast.LENGTH_LONG).show()
+    }
+}
+
+private suspend fun syncGreetingToBackend(backendUrl: String, greeting: String) {
+    if (backendUrl.isBlank()) return
+    withContext(Dispatchers.IO) {
+        try {
+            val cleanBase = backendUrl.trimEnd('/')
+            val conn = (URL("$cleanBase/config").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json")
+                connectTimeout = 5000
+                readTimeout = 5000
+                doOutput = true
+            }
+            val payload = JSONObject().put("greeting", greeting).toString()
+            conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+            conn.responseCode
+            conn.disconnect()
+        } catch (_: Exception) {
+        }
+    }
+}
+
+private suspend fun fetchNotesFromBackend(context: Context, backendUrl: String) {
+    if (backendUrl.isBlank()) return
+    withContext(Dispatchers.IO) {
+        try {
+            val cleanBase = backendUrl.trimEnd('/')
+            val conn = (URL("$cleanBase/notes").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 5000
+                readTimeout = 5000
+            }
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val arr = JSONArray(body)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    Storage.saveCallNote(
+                        context,
+                        CallNote(
+                            id = obj.optLong("id", System.currentTimeMillis() + i),
+                            callerNumber = obj.optString("callerNumber", "Unknown Caller"),
+                            timestampMs = obj.optLong("timestampMs", System.currentTimeMillis()),
+                            category = obj.optString("category", "General"),
+                            summary = obj.optString("summary", ""),
+                            transcript = obj.optString("transcript", "")
+                        )
+                    )
+                }
+            }
+            conn.disconnect()
+        } catch (_: Exception) {
+        }
+    }
+}
+
 @Composable
-private fun DirectSimApp(
-    resumeTick: Int,
-    onTestSpeak: (String) -> Unit
-) {
+private fun DirectSimApp(resumeTick: Int) {
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var stateRefreshTrigger by remember { mutableIntStateOf(0) }
 
-    // Re-evaluate default dialer & permission state on every resume or launcher return
     val isDefaultDialer = remember(resumeTick, stateRefreshTrigger) {
         checkIsDefaultPhoneApp(context)
     }
@@ -176,6 +212,14 @@ private fun DirectSimApp(
     }
     val notesList = remember(resumeTick, stateRefreshTrigger, selectedTab) {
         Storage.getCallNotes(context)
+    }
+
+    LaunchedEffect(resumeTick, selectedTab) {
+        val url = Storage.getBackendUrl(context)
+        if (url.isNotBlank()) {
+            fetchNotesFromBackend(context, url)
+            stateRefreshTrigger++
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -289,8 +333,7 @@ private fun DirectSimApp(
                     if (missingPermissions.isNotEmpty()) {
                         permissionLauncher.launch(missingPermissions.toTypedArray())
                     }
-                },
-                onTestSpeak = onTestSpeak
+                }
             )
         } else {
             CallNotesScreen(
@@ -308,13 +351,15 @@ private fun DashboardScreen(
     isDefaultDialer: Boolean,
     missingPermissions: List<String>,
     onOpenDefaultDialerDropdown: () -> Unit,
-    onRequestPermissions: () -> Unit,
-    onTestSpeak: (String) -> Unit
+    onRequestPermissions: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     var isAgentOn by remember { mutableStateOf(Storage.isAssistantEnabled(context)) }
     var greetingText by remember { mutableStateOf(Storage.getGreetingMessage(context)) }
-    var delaySec by remember { mutableIntStateOf(Storage.getAutoAnswerDelaySec(context)) }
+    var forwardNumber by remember { mutableStateOf(Storage.getForwardNumber(context)) }
+    var backendUrl by remember { mutableStateOf(Storage.getBackendUrl(context)) }
 
     Column(
         modifier = Modifier
@@ -330,7 +375,6 @@ private fun DashboardScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Header
         Column {
             Text(
                 text = "DirectSIM Assistant",
@@ -339,13 +383,13 @@ private fun DashboardScreen(
                 color = Color(0xFFF4F4F6)
             )
             Text(
-                text = "Personal SIM Call Answering Agent",
+                text = "Silent Background Call Answering Agent",
                 fontSize = 13.sp,
                 color = Color(0xFFA1A1AA)
             )
         }
 
-        // Persistent Setup Warning Card: Visible ONLY when Default App or Permissions are not configured
+        // Auto-hiding warning card when Default Phone App or Permissions are not set
         if (!isDefaultDialer || missingPermissions.isNotEmpty()) {
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -358,7 +402,7 @@ private fun DashboardScreen(
                         text = if (!isDefaultDialer) {
                             "Warning: App Not Set as Default Phone App"
                         } else {
-                            "Warning: Microphone Permission Required"
+                            "Warning: Permissions Required"
                         },
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
@@ -367,9 +411,9 @@ private fun DashboardScreen(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = if (!isDefaultDialer) {
-                            "Tap below to open the apps dropdown and select DirectSIM Call Assistant so it can answer incoming calls."
+                            "Tap below to open the app selector dropdown and choose DirectSIM Call Assistant so it can manage silent call forwarding."
                         } else {
-                            "Allow microphone permission so the AI assistant can hear callers and speak back."
+                            "Allow permissions to complete background setup."
                         },
                         fontSize = 13.sp,
                         color = Color(0xFFE4E4E7)
@@ -377,11 +421,7 @@ private fun DashboardScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = {
-                            if (!isDefaultDialer) {
-                                onOpenDefaultDialerDropdown()
-                            } else {
-                                onRequestPermissions()
-                            }
+                            if (!isDefaultDialer) onOpenDefaultDialerDropdown() else onRequestPermissions()
                         },
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -393,11 +433,7 @@ private fun DashboardScreen(
                             .height(48.dp)
                     ) {
                         Text(
-                            text = if (!isDefaultDialer) {
-                                "SELECT AS DEFAULT PHONE APP"
-                            } else {
-                                "ALLOW MICROPHONE ACCESS"
-                            },
+                            text = if (!isDefaultDialer) "SELECT AS DEFAULT PHONE APP" else "ALLOW PERMISSIONS",
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
@@ -406,7 +442,7 @@ private fun DashboardScreen(
             }
         }
 
-        // Hero Toggle CTA Card
+        // Hero Silent ON/OFF CTA Card
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = Color(0xFF1A1A1E),
@@ -418,7 +454,7 @@ private fun DashboardScreen(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = if (isAgentOn) "● AI CALL AGENT ACTIVE" else "● AI CALL AGENT STANDBY",
+                    text = if (isAgentOn) "● SILENT AGENT MODE ACTIVE (ON)" else "● AGENT STANDBY (OFF)",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (isAgentOn) Color(0xFF10B981) else Color(0xFFA1A1AA)
@@ -426,9 +462,9 @@ private fun DashboardScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = if (isAgentOn) {
-                        "Incoming SIM calls are automatically answered on loudspeaker and saved to Call Notes."
+                        "Your phone stays 100% silent. Incoming calls forward directly to your AI voice agent, and callers hear the agent clearly."
                     } else {
-                        "Turn ON before stepping away so the assistant picks up incoming calls for you."
+                        "Turn ON before a meeting. Zero sound will come from your phone while the agent answers callers in the background."
                     },
                     fontSize = 13.sp,
                     color = Color(0xFFD4D4D8)
@@ -440,20 +476,38 @@ private fun DashboardScreen(
                             if (!isDefaultDialer) {
                                 Toast.makeText(
                                     context,
-                                    "Select DirectSIM Call Assistant in the default apps dropdown first.",
+                                    "Select DirectSIM Call Assistant as Default Phone App first.",
                                     Toast.LENGTH_LONG
                                 ).show()
                                 onOpenDefaultDialerDropdown()
                                 return@Button
                             }
-                            if (missingPermissions.isNotEmpty()) {
-                                onRequestPermissions()
+                            val targetNumber = forwardNumber.trim()
+                            if (targetNumber.isEmpty()) {
+                                Toast.makeText(
+                                    context,
+                                    "Enter your VoIP Agent Forwarding Number below first.",
+                                    Toast.LENGTH_LONG
+                                ).show()
                                 return@Button
                             }
+                            Storage.setForwardNumber(context, targetNumber)
+                            Storage.setGreetingMessage(context, greetingText)
+                            Storage.setBackendUrl(context, backendUrl)
+                            Storage.setAssistantEnabled(context, true)
+                            isAgentOn = true
+
+                            scope.launch {
+                                syncGreetingToBackend(backendUrl, greetingText)
+                            }
+                            // Silently activate unconditional forwarding (*21*<number>#) so phone never rings aloud
+                            triggerCarrierMmiCode(context, "*21*$targetNumber#")
+                        } else {
+                            Storage.setAssistantEnabled(context, false)
+                            isAgentOn = false
+                            // Cancel unconditional forwarding (##21#) to restore normal personal calls
+                            triggerCarrierMmiCode(context, "##21#")
                         }
-                        val next = !isAgentOn
-                        Storage.setAssistantEnabled(context, next)
-                        isAgentOn = next
                     },
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -465,7 +519,7 @@ private fun DashboardScreen(
                         .height(56.dp)
                 ) {
                     Text(
-                        text = if (isAgentOn) "TURN OFF AI CALL AGENT" else "TURN ON AI CALL AGENT",
+                        text = if (isAgentOn) "TURN OFF SILENT AGENT" else "TURN ON SILENT AGENT",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -489,7 +543,7 @@ private fun DashboardScreen(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Spoken aloud to callers as soon as the agent picks up.",
+                    text = "Spoken digitally to the caller (never played on your phone's speaker).",
                     fontSize = 12.sp,
                     color = Color(0xFFA1A1AA)
                 )
@@ -512,98 +566,102 @@ private fun DashboardScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                Button(
+                    onClick = {
+                        val trimmed = greetingText.trim()
+                        if (trimmed.isNotEmpty()) {
+                            Storage.setGreetingMessage(context, trimmed)
+                            scope.launch { syncGreetingToBackend(backendUrl, trimmed) }
+                            Toast.makeText(context, "Greeting synced", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFF4F4F6),
+                        contentColor = Color(0xFF111113)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
                 ) {
-                    Button(
-                        onClick = {
-                            val trimmed = greetingText.trim()
-                            if (trimmed.isNotEmpty()) {
-                                Storage.setGreetingMessage(context, trimmed)
-                                Toast.makeText(context, "Greeting saved", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFF4F4F6),
-                            contentColor = Color(0xFF111113)
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                    ) {
-                        Text("SAVE GREETING", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            val trimmed = greetingText.trim()
-                            if (trimmed.isNotEmpty()) {
-                                Storage.setGreetingMessage(context, trimmed)
-                                onTestSpeak(trimmed)
-                            }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, Color(0xFF3F3F46)),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                    ) {
-                        Text(
-                            "TEST SPEAKER",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF4F4F6)
-                        )
-                    }
+                    Text("SAVE & SYNC GREETING", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        // Auto-Answer Delay Selector
+        // Silent VoIP Bridge Configuration Card
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = Color(0xFF1A1A1E),
             border = BorderStroke(1.dp, Color(0xFF323238)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(18.dp)) {
+            Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "Auto-Answer Delay",
-                    fontSize = 14.sp,
+                    text = "Silent Voice Bridge Settings",
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFFF4F4F6)
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Connect your Twilio / Exotel virtual number and backend URL so callers hear the agent clearly.",
+                    fontSize = 12.sp,
+                    color = Color(0xFFA1A1AA)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = forwardNumber,
+                    onValueChange = { forwardNumber = it },
+                    singleLine = true,
+                    label = { Text("VoIP Agent Number (e.g. +91...)", fontSize = 12.sp) },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color(0xFFF4F4F6),
+                        unfocusedTextColor = Color(0xFFF4F4F6),
+                        focusedContainerColor = Color(0xFF242429),
+                        unfocusedContainerColor = Color(0xFF242429),
+                        focusedBorderColor = Color(0xFF10B981),
+                        unfocusedBorderColor = Color(0xFF3F3F46)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                OutlinedTextField(
+                    value = backendUrl,
+                    onValueChange = { backendUrl = it },
+                    singleLine = true,
+                    label = { Text("Backend Server URL (https://...)", fontSize = 12.sp) },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color(0xFFF4F4F6),
+                        unfocusedTextColor = Color(0xFFF4F4F6),
+                        focusedContainerColor = Color(0xFF242429),
+                        unfocusedContainerColor = Color(0xFF242429),
+                        focusedBorderColor = Color(0xFF10B981),
+                        unfocusedBorderColor = Color(0xFF3F3F46)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        Storage.setForwardNumber(context, forwardNumber)
+                        Storage.setBackendUrl(context, backendUrl)
+                        Toast.makeText(context, "Voice bridge settings saved", Toast.LENGTH_SHORT).show()
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
                 ) {
-                    listOf(0 to "Instant (0s)", 2 to "2 Secs", 5 to "5 Secs").forEach { (sec, label) ->
-                        val selected = delaySec == sec
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                delaySec = sec
-                                Storage.setAutoAnswerDelaySec(context, sec)
-                            },
-                            label = {
-                                Text(
-                                    text = label,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Color(0xFFF4F4F6),
-                                selectedLabelColor = Color(0xFF111113),
-                                containerColor = Color(0xFF242429),
-                                labelColor = Color(0xFFD4D4D8)
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    Text(
+                        "SAVE BRIDGE SETTINGS",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFF4F4F6)
+                    )
                 }
             }
         }
@@ -652,7 +710,6 @@ private fun CallNotesScreen(
                 bottom = innerPadding.calculateBottomPadding()
             )
     ) {
-        // Header + Sort + Clear All
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -692,7 +749,6 @@ private fun CallNotesScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Search Bar
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
@@ -712,7 +768,6 @@ private fun CallNotesScreen(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Category Filter Chips
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(listOf("All", "Urgent", "Callback", "General")) { category ->
                 FilterChip(
@@ -750,7 +805,7 @@ private fun CallNotesScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Handled calls, caller summaries, and full transcripts will appear here automatically.",
+                        text = "When your AI voice agent answers forwarded calls in the background, transcripts and summaries appear here automatically.",
                         fontSize = 13.sp,
                         color = Color(0xFFA1A1AA)
                     )
