@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.telecom.Call
 import android.telecom.CallAudioState
+import android.telecom.CallEndpoint
 import android.telecom.InCallService
 import android.telecom.VideoProfile
 import android.util.Log
@@ -21,6 +22,7 @@ class AssistantInCallService : InCallService() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private var availableEndpoints: List<CallEndpoint> = emptyList()
 
     private val callCallback = object : Call.Callback() {
         override fun onStateChanged(call: Call, state: Int) {
@@ -88,15 +90,34 @@ class AssistantInCallService : InCallService() {
         super.onCallAudioStateChanged(audioState)
         if (audioState != null && Storage.isAssistantEnabled(this)) {
             if (audioState.route != CallAudioState.ROUTE_SPEAKER) {
-                Log.d(TAG, "System switched audio route away from speaker; re-enforcing speaker.")
                 forceSpeakerphone()
             }
         }
     }
 
+    override fun onAvailableCallEndpointsChanged(availableEndpoints: MutableList<CallEndpoint>) {
+        super.onAvailableCallEndpointsChanged(availableEndpoints)
+        this.availableEndpoints = availableEndpoints
+        if (Storage.isAssistantEnabled(this)) {
+            forceSpeakerphone()
+        }
+    }
+
     fun forceSpeakerphone() {
-        @Suppress("DEPRECATION")
-        setAudioRoute(CallAudioState.ROUTE_SPEAKER)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val speakerEndpoint = availableEndpoints.firstOrNull {
+                it.endpointType == CallEndpoint.TYPE_SPEAKER
+            }
+            if (speakerEndpoint != null) {
+                requestCallEndpointChange(speakerEndpoint, mainExecutor) { }
+            } else {
+                @Suppress("DEPRECATION")
+                setAudioRoute(CallAudioState.ROUTE_SPEAKER)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            setAudioRoute(CallAudioState.ROUTE_SPEAKER)
+        }
 
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -108,8 +129,20 @@ class AssistantInCallService : InCallService() {
     }
 
     fun restoreEarpieceForManualTakeover() {
-        @Suppress("DEPRECATION")
-        setAudioRoute(CallAudioState.ROUTE_EARPIECE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val earpieceEndpoint = availableEndpoints.firstOrNull {
+                it.endpointType == CallEndpoint.TYPE_EARPIECE
+            }
+            if (earpieceEndpoint != null) {
+                requestCallEndpointChange(earpieceEndpoint, mainExecutor) { }
+            } else {
+                @Suppress("DEPRECATION")
+                setAudioRoute(CallAudioState.ROUTE_EARPIECE)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            setAudioRoute(CallAudioState.ROUTE_EARPIECE)
+        }
 
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         @Suppress("DEPRECATION")

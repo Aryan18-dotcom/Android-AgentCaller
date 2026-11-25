@@ -46,7 +46,7 @@ object Storage {
     fun getGreetingMessage(context: Context): String {
         return prefs(context).getString(
             KEY_GREETING,
-            "Hello! Aryan is unavailable right now and I am his AI assistant. Please tell me your name and reason for calling."
+            "Hello! Aryan is unavailable right now and I am his AI assistant. Please tell me your name and why you are calling."
         ) ?: "Hello! How can I help you?"
     }
 
@@ -65,7 +65,7 @@ object Storage {
     fun getSystemPrompt(context: Context): String {
         return prefs(context).getString(
             KEY_SYSTEM_PROMPT,
-            "You are Aryan's personal phone assistant. Keep replies concise, polite, and under 2 sentences."
+            "You are Aryan's personal phone assistant. Keep replies polite, natural, and under 2 sentences."
         ) ?: ""
     }
 

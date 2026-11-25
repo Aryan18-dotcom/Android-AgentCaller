@@ -1,11 +1,7 @@
 package com.aryan.directsim
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.os.Build
@@ -18,18 +14,46 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.WindowInsets
 import android.view.WindowManager
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.util.Locale
 import java.util.concurrent.Executors
 
-class CallActivity : Activity() {
+data class ChatTurn(val isAgent: Boolean, val text: String)
+
+class CallActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "CallActivity"
@@ -40,24 +64,22 @@ class CallActivity : Activity() {
     private var tts: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
 
-    private lateinit var statusText: TextView
-    private lateinit var transcriptText: TextView
-    private lateinit var transcriptScroll: ScrollView
-
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bgExecutor = Executors.newSingleThreadExecutor()
 
-    private var callerNumber: String = "Unknown Caller"
-    private val transcriptLines = mutableListOf<String>()
+    private var callerNumber by mutableStateOf("Unknown Caller")
+    private var statusText by mutableStateOf("Initializing speaker & voice engine...")
+    private var isAgentSpeaking by mutableStateOf(false)
+    private val turns = mutableStateListOf<ChatTurn>()
     private val callerUtterances = mutableListOf<String>()
 
     private var isTtsReady = false
-    private var isAgentSpeaking = false
     private var isCallActive = true
     private var hasSpokenGreeting = false
     private var hasSavedNote = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         instance = this
 
@@ -75,143 +97,148 @@ class CallActivity : Activity() {
 
         callerNumber = intent.getStringExtra("CALLER_NUMBER") ?: "Unknown Caller"
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        buildUi()
+
+        setContent {
+            val neutralScheme = darkColorScheme(
+                primary = Color(0xFF10B981),
+                background = Color(0xFF111113),
+                surface = Color(0xFF1A1A1E),
+                onBackground = Color(0xFFF4F4F6),
+                onSurface = Color(0xFFF4F4F6)
+            )
+            MaterialTheme(colorScheme = neutralScheme) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = Color(0xFF111113)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 20.dp, vertical = 28.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color(0xFF1A1A1E),
+                            border = BorderStroke(1.dp, Color(0xFF2E2E34)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "LIVE CALL • SPEAKER COUPLING",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981)
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = callerNumber,
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFF4F4F6)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = statusText,
+                                    fontSize = 13.sp,
+                                    color = if (isAgentSpeaking) Color(0xFF10B981) else Color(0xFFF59E0B)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color(0xFF161619),
+                            border = BorderStroke(1.dp, Color(0xFF2A2A30)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(turns) { turn ->
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (turn.isAgent) Color(0xFF1E2925) else Color(0xFF242429),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (turn.isAgent) Color(0xFF10B981).copy(alpha = 0.4f)
+                                            else Color(0xFF383842)
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Text(
+                                                text = if (turn.isAgent) "AI Agent" else "Caller",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (turn.isAgent) Color(0xFF34D399) else Color(0xFFA1A1AA)
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = turn.text,
+                                                fontSize = 14.sp,
+                                                color = Color(0xFFF4F4F6)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        OutlinedButton(
+                            onClick = { takeOverCallManually() },
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                        ) {
+                            Text(
+                                text = "TAKE OVER CALL MANUALLY",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFF4F4F6)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = {
+                                AssistantInCallService.instance?.hangUpActiveCall()
+                                onCallEnded()
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                        ) {
+                            Text(
+                                text = "END CALL & SAVE NOTE",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         AssistantInCallService.instance?.forceSpeakerphone()
         initSpeechRecognizer()
         initTextToSpeech()
-    }
-
-    private fun dp(value: Int): Int {
-        return TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            value.toFloat(),
-            resources.displayMetrics
-        ).toInt()
-    }
-
-    private fun roundedBg(fillHex: String, strokeHex: String? = null, radiusDp: Int = 16): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(radiusDp).toFloat()
-            setColor(Color.parseColor(fillHex))
-            if (strokeHex != null) {
-                setStroke(dp(1), Color.parseColor(strokeHex))
-            }
-        }
-    }
-
-    private fun buildUi() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#121212"))
-            setPadding(dp(20), dp(24), dp(20), dp(24))
-        }
-
-        root.setOnApplyWindowInsetsListener { v, insets ->
-            val topInset: Int
-            val bottomInset: Int
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val sys = insets.getInsets(WindowInsets.Type.systemBars())
-                topInset = sys.top
-                bottomInset = sys.bottom
-            } else {
-                @Suppress("DEPRECATION")
-                topInset = insets.systemWindowInsetTop
-                @Suppress("DEPRECATION")
-                bottomInset = insets.systemWindowInsetBottom
-            }
-            v.setPadding(dp(20), topInset + dp(16), dp(20), bottomInset + dp(16))
-            insets
-        }
-
-        val headerCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBg("#1E1E1E", "#383838", 18)
-            setPadding(dp(20), dp(20), dp(20), dp(20))
-        }
-
-        val badge = TextView(this).apply {
-            text = "LIVE CALL • SPEAKER COUPLING ACTIVE"
-            textSize = 11f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#10B981"))
-            gravity = Gravity.CENTER
-        }
-
-        val header = TextView(this).apply {
-            text = callerNumber
-            textSize = 22f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#F5F5F5"))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(6))
-        }
-
-        statusText = TextView(this).apply {
-            text = "Initializing loudspeaker & voice engine..."
-            textSize = 14f
-            setTextColor(Color.parseColor("#A3A3A3"))
-            gravity = Gravity.CENTER
-        }
-
-        headerCard.addView(badge)
-        headerCard.addView(header)
-        headerCard.addView(statusText)
-
-        transcriptScroll = ScrollView(this).apply {
-            background = roundedBg("#181818", "#2E2E2E", 16)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            ).apply {
-                topMargin = dp(16)
-                bottomMargin = dp(16)
-            }
-        }
-
-        transcriptText = TextView(this).apply {
-            text = ""
-            textSize = 15f
-            setLineSpacing(dp(4).toFloat(), 1f)
-            setTextColor(Color.parseColor("#E5E5E5"))
-        }
-        transcriptScroll.addView(transcriptText)
-
-        val takeoverBtn = Button(this).apply {
-            text = "TAKE OVER CALL MANUALLY"
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            background = roundedBg("#262626", "#525252", 14)
-            setTextColor(Color.parseColor("#F5F5F5"))
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            setOnClickListener { takeOverCallManually() }
-        }
-
-        val endBtn = Button(this).apply {
-            text = "END CALL & SAVE NOTE"
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            background = roundedBg("#DC2626", null, 14)
-            setTextColor(Color.WHITE)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(12) }
-            setOnClickListener {
-                AssistantInCallService.instance?.hangUpActiveCall()
-                onCallEnded()
-            }
-        }
-
-        root.addView(headerCard)
-        root.addView(transcriptScroll)
-        root.addView(takeoverBtn)
-        root.addView(endBtn)
-        setContentView(root)
     }
 
     private fun initTextToSpeech() {
@@ -226,34 +253,33 @@ class CallActivity : Activity() {
                 tts?.setAudioAttributes(attrs)
 
                 tts?.setSpeechRate(0.95f)
-                tts?.setPitch(1.08f)
+                tts?.setPitch(1.06f)
 
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
-                        isAgentSpeaking = true
                         mainHandler.post {
+                            isAgentSpeaking = true
                             stopListening()
-                            statusText.text = "Agent speaking to caller..."
-                            statusText.setTextColor(Color.parseColor("#10B981"))
+                            statusText = "Agent speaking to caller..."
                         }
                     }
 
                     override fun onDone(utteranceId: String?) {
-                        isAgentSpeaking = false
                         mainHandler.postDelayed({
+                            isAgentSpeaking = false
                             if (isCallActive) {
                                 AssistantInCallService.instance?.forceSpeakerphone()
                                 startListening()
                             }
-                        }, 400L)
+                        }, 450L)
                     }
 
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) {
-                        isAgentSpeaking = false
                         mainHandler.postDelayed({
+                            isAgentSpeaking = false
                             if (isCallActive) startListening()
-                        }, 400L)
+                        }, 450L)
                     }
                 })
 
@@ -263,8 +289,8 @@ class CallActivity : Activity() {
                     speakToCaller(Storage.getGreetingMessage(this))
                 }
             } else {
-                Log.e(TAG, "TTS initialization failed with status: $status")
-                statusText.text = "TTS engine error (code $status)."
+                Log.e(TAG, "TTS init failed: $status")
+                statusText = "TTS engine error ($status)"
             }
         }
     }
@@ -280,38 +306,37 @@ class CallActivity : Activity() {
         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
 
-        appendTranscript("Agent: $message")
+        turns.add(ChatTurn(isAgent = true, text = message))
 
         val params = Bundle().apply {
             putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
             putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
         }
 
-        tts?.speak(message, TextToSpeech.QUEUE_FLUSH, params, "AGENT_UTTERANCE_${System.currentTimeMillis()}")
+        tts?.speak(message, TextToSpeech.QUEUE_FLUSH, params, "AGENT_${System.currentTimeMillis()}")
     }
 
     private fun initSpeechRecognizer() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            statusText.text = "Speech recognition unavailable on this device."
+            statusText = "Speech recognition unavailable"
             return
         }
 
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
-                    statusText.text = "Listening to caller..."
-                    statusText.setTextColor(Color.parseColor("#F59E0B"))
+                    statusText = "Listening to caller..."
                 }
 
                 override fun onBeginningOfSpeech() {
-                    statusText.text = "Caller is speaking..."
+                    statusText = "Caller is speaking..."
                 }
 
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
 
                 override fun onEndOfSpeech() {
-                    statusText.text = "Processing reply..."
+                    statusText = "Processing reply..."
                 }
 
                 override fun onError(error: Int) {
@@ -327,7 +352,7 @@ class CallActivity : Activity() {
                     val spokenText = matches?.firstOrNull()?.trim().orEmpty()
                     if (spokenText.isNotEmpty() && isCallActive && !isAgentSpeaking) {
                         callerUtterances.add(spokenText)
-                        appendTranscript("Caller: $spokenText")
+                        turns.add(ChatTurn(isAgent = false, text = spokenText))
                         processCallerInput(spokenText)
                     } else if (isCallActive && !isAgentSpeaking) {
                         startListening()
@@ -350,7 +375,7 @@ class CallActivity : Activity() {
             }
             speechRecognizer?.startListening(intent)
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting SpeechRecognizer", e)
+            Log.e(TAG, "Error starting STT", e)
         }
     }
 
@@ -359,12 +384,12 @@ class CallActivity : Activity() {
             speechRecognizer?.stopListening()
             speechRecognizer?.cancel()
         } catch (e: Exception) {
-            Log.e(TAG, "Error stopping SpeechRecognizer", e)
+            Log.e(TAG, "Error stopping STT", e)
         }
     }
 
     private fun processCallerInput(callerSpeech: String) {
-        statusText.text = "Generating response..."
+        statusText = "Generating response..."
         bgExecutor.execute {
             val reply = generateAgentReply(callerSpeech)
             mainHandler.post {
@@ -392,7 +417,7 @@ class CallActivity : Activity() {
     private fun persistNoteIfNeeded() {
         if (hasSavedNote) return
         hasSavedNote = true
-        if (transcriptLines.isEmpty()) return
+        if (turns.isEmpty()) return
 
         val joinedCaller = callerUtterances.joinToString(" | ")
         val lower = joinedCaller.lowercase(Locale.getDefault())
@@ -406,6 +431,9 @@ class CallActivity : Activity() {
         } else {
             "Greeting played; caller did not leave a voice message."
         }
+        val fullTranscript = turns.joinToString("\n\n") {
+            "${if (it.isAgent) "Agent" else "Caller"}: ${it.text}"
+        }
 
         Storage.saveCallNote(
             this,
@@ -415,7 +443,7 @@ class CallActivity : Activity() {
                 timestampMs = System.currentTimeMillis(),
                 category = category,
                 summary = summary,
-                transcript = transcriptLines.joinToString("\n\n")
+                transcript = fullTranscript
             )
         )
     }
@@ -438,14 +466,6 @@ class CallActivity : Activity() {
             stopListening()
             tts?.stop()
             finish()
-        }
-    }
-
-    private fun appendTranscript(line: String) {
-        transcriptLines.add(line)
-        transcriptText.append("$line\n\n")
-        transcriptScroll.post {
-            transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN)
         }
     }
 

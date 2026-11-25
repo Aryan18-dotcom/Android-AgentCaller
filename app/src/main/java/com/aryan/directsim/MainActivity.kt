@@ -1,56 +1,85 @@
 package com.aryan.directsim
 
 import android.Manifest
-import android.app.Activity
 import android.app.role.RoleManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.telecom.TelecomManager
-import android.text.InputType
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.View
-import android.view.WindowInsets
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
-class MainActivity : Activity() {
-
-    companion object {
-        private const val REQ_PERMISSIONS = 1001
-        private const val REQ_DIALER_ROLE = 1002
-    }
+class MainActivity : ComponentActivity() {
 
     private var testTts: TextToSpeech? = null
-
-    private lateinit var warningCard: LinearLayout
-    private lateinit var warningTitleText: TextView
-    private lateinit var warningBodyText: TextView
-    private lateinit var fixSetupBtn: Button
-
-    private lateinit var agentBadgeText: TextView
-    private lateinit var agentSubText: TextView
-    private lateinit var bigToggleCta: Button
-    private lateinit var greetingInput: EditText
-    private lateinit var delayButtons: List<Button>
-    private lateinit var notesNavBtn: Button
+    private var resumeTick by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         testTts = TextToSpeech(this) { status ->
@@ -65,557 +94,786 @@ class MainActivity : Activity() {
             }
         }
 
-        buildUi()
-        refreshDashboardState()
+        setContent {
+            val neutralDarkColors = darkColorScheme(
+                primary = Color(0xFF10B981),
+                onPrimary = Color(0xFF0A0A0B),
+                secondary = Color(0xFFA1A1AA),
+                background = Color(0xFF111113),
+                surface = Color(0xFF1A1A1E),
+                surfaceVariant = Color(0xFF242429),
+                onBackground = Color(0xFFF4F4F6),
+                onSurface = Color(0xFFF4F4F6),
+                onSurfaceVariant = Color(0xFFA1A1AA),
+                outline = Color(0xFF323238)
+            )
+
+            MaterialTheme(colorScheme = neutralDarkColors) {
+                DirectSimApp(
+                    resumeTick = resumeTick,
+                    onTestSpeak = { text ->
+                        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                        @Suppress("DEPRECATION")
+                        am.isSpeakerphoneOn = true
+                        am.setStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            am.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+                            0
+                        )
+                        testTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "TEST_TTS")
+                    }
+                )
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        refreshDashboardState()
-    }
-
-    private fun dp(value: Int): Int {
-        return TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            value.toFloat(),
-            resources.displayMetrics
-        ).toInt()
-    }
-
-    private fun roundedBg(fillHex: String, strokeHex: String? = null, radiusDp: Int = 16): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(radiusDp).toFloat()
-            setColor(Color.parseColor(fillHex))
-            if (strokeHex != null) {
-                setStroke(dp(1), Color.parseColor(strokeHex))
-            }
-        }
-    }
-
-    private fun buildUi() {
-        // Outer container for Moto Edge 70 Fusion edge-to-edge responsiveness
-        val screenRoot = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#121212"))
-        }
-
-        val topHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#121212"))
-            setPadding(dp(20), dp(16), dp(20), dp(12))
-        }
-
-        val title = TextView(this).apply {
-            text = "DirectSIM Assistant"
-            textSize = 24f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#F5F5F5"))
-        }
-
-        val subtitle = TextView(this).apply {
-            text = "Personal SIM Call Answering Agent"
-            textSize = 13f
-            setTextColor(Color.parseColor("#A3A3A3"))
-            setPadding(0, dp(2), 0, 0)
-        }
-
-        topHeader.addView(title)
-        topHeader.addView(subtitle)
-
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-        }
-
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(24))
-        }
-
-        // 1. PERSISTENT SETUP WARNING BANNER (Auto-hides once Default App + Permissions are ready)
-        warningCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBg("#261D12", "#D97706", 16)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(16) }
-        }
-
-        warningTitleText = TextView(this).apply {
-            text = "Action Required: Default Phone App Not Set"
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#FBBF24"))
-        }
-
-        warningBodyText = TextView(this).apply {
-            text = "Tap below to open the app selector dropdown and choose DirectSIM Call Assistant so it can answer calls and route speaker audio."
-            textSize = 13f
-            setTextColor(Color.parseColor("#E5E5E5"))
-            setPadding(0, dp(6), 0, dp(12))
-        }
-
-        fixSetupBtn = Button(this).apply {
-            text = "SET AS DEFAULT PHONE APP"
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            background = roundedBg("#D97706", null, 12)
-            setTextColor(Color.parseColor("#121212"))
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            setOnClickListener { handleOneClickSetup() }
-        }
-
-        warningCard.addView(warningTitleText)
-        warningCard.addView(warningBodyText)
-        warningCard.addView(fixSetupBtn)
-        content.addView(warningCard)
-
-        // 2. HERO ON/OFF CTA CARD
-        val heroCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBg("#1E1E1E", "#383838", 18)
-            setPadding(dp(20), dp(20), dp(20), dp(20))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(16) }
-        }
-
-        agentBadgeText = TextView(this).apply {
-            text = "● ASSISTANT STANDBY (OFF)"
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#A3A3A3"))
-        }
-
-        agentSubText = TextView(this).apply {
-            text = "Incoming calls ring normally until you turn the AI agent ON."
-            textSize = 13f
-            setTextColor(Color.parseColor("#D4D4D4"))
-            setPadding(0, dp(6), 0, dp(16))
-        }
-
-        bigToggleCta = Button(this).apply {
-            text = "TURN ON AI CALL AGENT"
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(16), dp(18), dp(16), dp(18))
-            setOnClickListener { toggleAgentState() }
-        }
-
-        heroCard.addView(agentBadgeText)
-        heroCard.addView(agentSubText)
-        heroCard.addView(bigToggleCta)
-        content.addView(heroCard)
-
-        // 3. GREETING TEXTAREA CARD
-        val greetingCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBg("#1E1E1E", "#383838", 18)
-            setPadding(dp(20), dp(20), dp(20), dp(20))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(16) }
-        }
-
-        val greetingTitle = TextView(this).apply {
-            text = "Agent Greeting Message"
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#F5F5F5"))
-        }
-
-        val greetingHint = TextView(this).apply {
-            text = "Spoken aloud automatically as soon as the agent picks up an incoming call."
-            textSize = 12f
-            setTextColor(Color.parseColor("#A3A3A3"))
-            setPadding(0, dp(4), 0, dp(12))
-        }
-
-        greetingInput = EditText(this).apply {
-            setText(Storage.getGreetingMessage(this@MainActivity))
-            hint = "Enter greeting message..."
-            setHintTextColor(Color.parseColor("#737373"))
-            setTextColor(Color.parseColor("#F5F5F5"))
-            textSize = 14f
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            minLines = 3
-            maxLines = 5
-            gravity = Gravity.TOP or Gravity.START
-            background = roundedBg("#262626", "#404040", 12)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-        }
-
-        val actionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(12) }
-        }
-
-        val saveGreetingBtn = Button(this).apply {
-            text = "SAVE GREETING"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            background = roundedBg("#F5F5F5", null, 12)
-            setTextColor(Color.parseColor("#121212"))
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            ).apply { marginEnd = dp(8) }
-            setOnClickListener {
-                val updated = greetingInput.text.toString().trim()
-                if (updated.isNotEmpty()) {
-                    Storage.setGreetingMessage(this@MainActivity, updated)
-                    Toast.makeText(this@MainActivity, "Greeting updated", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-
-        val testVoiceBtn = Button(this).apply {
-            text = "TEST SPEAKER"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            background = roundedBg("#262626", "#404040", 12)
-            setTextColor(Color.parseColor("#F5F5F5"))
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            ).apply { marginStart = dp(8) }
-            setOnClickListener {
-                val textToSpeak = greetingInput.text.toString().trim()
-                Storage.setGreetingMessage(this@MainActivity, textToSpeak)
-                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                @Suppress("DEPRECATION")
-                am.isSpeakerphoneOn = true
-                am.setStreamVolume(
-                    AudioManager.STREAM_MUSIC,
-                    am.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
-                    0
-                )
-                testTts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "TEST_TTS")
-            }
-        }
-
-        actionRow.addView(saveGreetingBtn)
-        actionRow.addView(testVoiceBtn)
-
-        greetingCard.addView(greetingTitle)
-        greetingCard.addView(greetingHint)
-        greetingCard.addView(greetingInput)
-        greetingCard.addView(actionRow)
-        content.addView(greetingCard)
-
-        // 4. AUTO-ANSWER DELAY CARD
-        val delayCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBg("#1E1E1E", "#383838", 18)
-            setPadding(dp(20), dp(16), dp(20), dp(16))
-        }
-
-        val delayTitle = TextView(this).apply {
-            text = "Auto-Answer Delay"
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#F5F5F5"))
-            setPadding(0, 0, 0, dp(10))
-        }
-
-        val delayRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val options = listOf(0 to "Instant (0s)", 2 to "2 Secs", 5 to "5 Secs")
-        delayButtons = options.map { (sec, label) ->
-            Button(this).apply {
-                text = label
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                tag = sec
-                layoutParams = LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
-                ).apply {
-                    marginEnd = if (sec != 5) dp(8) else 0
-                }
-                setOnClickListener {
-                    Storage.setAutoAnswerDelaySec(this@MainActivity, sec)
-                    updateDelayButtons()
-                }
-            }
-        }
-        delayButtons.forEach { delayRow.addView(it) }
-
-        delayCard.addView(delayTitle)
-        delayCard.addView(delayRow)
-        content.addView(delayCard)
-
-        scroll.addView(content)
-
-        // 5. BOTTOM NAVIGATION BAR
-        val bottomNav = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.parseColor("#181818"))
-            setPadding(dp(16), dp(10), dp(16), dp(12))
-        }
-
-        val dashboardNavBtn = Button(this).apply {
-            text = "Dashboard"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            background = roundedBg("#262626", "#525252", 12)
-            setTextColor(Color.parseColor("#F5F5F5"))
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            ).apply { marginEnd = dp(8) }
-        }
-
-        notesNavBtn = Button(this).apply {
-            text = "Call Notes"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            background = roundedBg("#181818", "#383838", 12)
-            setTextColor(Color.parseColor("#A3A3A3"))
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            ).apply { marginStart = dp(8) }
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, NotesActivity::class.java))
-            }
-        }
-
-        bottomNav.addView(dashboardNavBtn)
-        bottomNav.addView(notesNavBtn)
-
-        screenRoot.addView(topHeader)
-        screenRoot.addView(scroll)
-        screenRoot.addView(bottomNav)
-
-        // Handle Moto Edge 70 Fusion status bar, gesture nav bar & keyboard insets
-        screenRoot.setOnApplyWindowInsetsListener { _, insets ->
-            val topInset: Int
-            val bottomInset: Int
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val sys = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
-                topInset = sys.top
-                bottomInset = sys.bottom
-            } else {
-                @Suppress("DEPRECATION")
-                topInset = insets.systemWindowInsetTop
-                @Suppress("DEPRECATION")
-                bottomInset = insets.systemWindowInsetBottom
-            }
-            topHeader.setPadding(dp(20), topInset + dp(14), dp(20), dp(12))
-            bottomNav.setPadding(dp(16), dp(10), dp(16), bottomInset + dp(10))
-            insets
-        }
-
-        setContentView(screenRoot)
-    }
-
-    private fun isDefaultPhoneApp(): Boolean {
-        val telecom = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-        val isTelecomDefault = telecom.defaultDialerPackage == packageName
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val roleManager = getSystemService(RoleManager::class.java)
-            isTelecomDefault || roleManager.isRoleHeld(RoleManager.ROLE_DIALER)
-        } else {
-            isTelecomDefault
-        }
-    }
-
-    private fun getMissingPermissions(): List<String> {
-        val perms = mutableListOf(
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.READ_PHONE_STATE,
-            Manifest.permission.CALL_PHONE,
-            Manifest.permission.ANSWER_PHONE_CALLS
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            perms.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        return perms.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-    }
-
-    private fun refreshDashboardState() {
-        val defaultReady = isDefaultPhoneApp()
-        val missingPerms = getMissingPermissions()
-
-        // Requirement 3 & 4: Show warning + direct button when unconfigured; hide completely when ready
-        if (defaultReady && missingPerms.isEmpty()) {
-            warningCard.visibility = View.GONE
-        } else {
-            warningCard.visibility = View.VISIBLE
-            if (!defaultReady) {
-                warningTitleText.text = "Warning: App Not Set as Default Phone App"
-                warningBodyText.text = "Tap the button below to open the apps dropdown and select DirectSIM Call Assistant so it can answer incoming calls."
-                fixSetupBtn.text = "SELECT AS DEFAULT PHONE APP"
-            } else {
-                warningTitleText.text = "Warning: Required Call & Mic Permissions Missing"
-                warningBodyText.text = "Grant microphone and phone permissions so the AI agent can hear callers and speak back."
-                fixSetupBtn.text = "ALLOW PERMISSIONS NOW"
-            }
-        }
-
-        // Update Hero Toggle CTA
-        val enabled = Storage.isAssistantEnabled(this)
-        if (enabled) {
-            agentBadgeText.text = "● AI CALL AGENT IS ACTIVE (ON)"
-            agentBadgeText.setTextColor(Color.parseColor("#10B981"))
-            agentSubText.text = "Incoming SIM calls will be auto-answered on loudspeaker and logged to Call Notes."
-            bigToggleCta.text = "TURN OFF AI CALL AGENT"
-            bigToggleCta.background = roundedBg("#DC2626", null, 14)
-            bigToggleCta.setTextColor(Color.WHITE)
-        } else {
-            agentBadgeText.text = "● AI CALL AGENT IS OFF"
-            agentBadgeText.setTextColor(Color.parseColor("#A3A3A3"))
-            agentSubText.text = "Turn ON before stepping away so the assistant answers incoming calls for you."
-            bigToggleCta.text = "TURN ON AI CALL AGENT"
-            bigToggleCta.background = roundedBg("#10B981", null, 14)
-            bigToggleCta.setTextColor(Color.parseColor("#121212"))
-        }
-
-        updateDelayButtons()
-
-        val noteCount = Storage.getCallNotes(this).size
-        notesNavBtn.text = if (noteCount > 0) "Call Notes ($noteCount)" else "Call Notes"
-    }
-
-    private fun updateDelayButtons() {
-        val selected = Storage.getAutoAnswerDelaySec(this)
-        delayButtons.forEach { btn ->
-            val sec = btn.tag as Int
-            if (sec == selected) {
-                btn.background = roundedBg("#F5F5F5", null, 10)
-                btn.setTextColor(Color.parseColor("#121212"))
-            } else {
-                btn.background = roundedBg("#262626", "#404040", 10)
-                btn.setTextColor(Color.parseColor("#D4D4D4"))
-            }
-        }
-    }
-
-    private fun toggleAgentState() {
-        val currentlyOn = Storage.isAssistantEnabled(this)
-        if (!currentlyOn) {
-            if (!isDefaultPhoneApp()) {
-                Toast.makeText(
-                    this,
-                    "Please select DirectSIM Call Assistant in the default apps dropdown first.",
-                    Toast.LENGTH_LONG
-                ).show()
-                openDefaultDialerDropdown()
-                return
-            }
-            val missing = getMissingPermissions()
-            if (missing.isNotEmpty()) {
-                requestPermissions(missing.toTypedArray(), REQ_PERMISSIONS)
-                return
-            }
-        }
-
-        Storage.setAssistantEnabled(this, !currentlyOn)
-        refreshDashboardState()
-    }
-
-    private fun handleOneClickSetup() {
-        if (!isDefaultPhoneApp()) {
-            openDefaultDialerDropdown()
-        } else {
-            val missing = getMissingPermissions()
-            if (missing.isNotEmpty()) {
-                requestPermissions(missing.toTypedArray(), REQ_PERMISSIONS)
-            }
-        }
-    }
-
-    /**
-     * Opens the system Default Phone App dropdown listing all dialer apps,
-     * falling back to Android's Default Apps settings screen if suppressed by OEM rules.
-     */
-    private fun openDefaultDialerDropdown() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val roleManager = getSystemService(RoleManager::class.java)
-                if (roleManager.isRoleAvailable(RoleManager.ROLE_DIALER) &&
-                    !roleManager.isRoleHeld(RoleManager.ROLE_DIALER)
-                ) {
-                    @Suppress("DEPRECATION")
-                    startActivityForResult(
-                        roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER),
-                        REQ_DIALER_ROLE
-                    )
-                    return
-                }
-            } else {
-                val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
-                    putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, packageName)
-                }
-                @Suppress("DEPRECATION")
-                startActivityForResult(intent, REQ_DIALER_ROLE)
-                return
-            }
-        } catch (_: Exception) {
-        }
-
-        // Fallback: Direct Default Apps dropdown list in Android Settings
-        try {
-            startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
-        } catch (_: Exception) {
-            Toast.makeText(this, "Open Settings > Apps > Default apps > Phone app", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        @Suppress("DEPRECATION")
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_DIALER_ROLE) {
-            if (!isDefaultPhoneApp() && resultCode != RESULT_OK) {
-                // If the quick dialog was dismissed or blocked, open the full Default Apps dropdown list
-                try {
-                    startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
-                } catch (_: Exception) {
-                }
-            }
-            val missing = getMissingPermissions()
-            if (missing.isNotEmpty()) {
-                requestPermissions(missing.toTypedArray(), REQ_PERMISSIONS)
-            }
-            refreshDashboardState()
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        refreshDashboardState()
+        resumeTick++
     }
 
     override fun onDestroy() {
         testTts?.stop()
         testTts?.shutdown()
         super.onDestroy()
+    }
+}
+
+private fun checkIsDefaultPhoneApp(context: Context): Boolean {
+    val telecom = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+    val isTelecomDefault = telecom.defaultDialerPackage == context.packageName
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val roleManager = context.getSystemService(RoleManager::class.java)
+        isTelecomDefault || roleManager.isRoleHeld(RoleManager.ROLE_DIALER)
+    } else {
+        isTelecomDefault
+    }
+}
+
+private fun getMissingRuntimePermissions(context: Context): List<String> {
+    val required = mutableListOf(Manifest.permission.RECORD_AUDIO)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        required.add(Manifest.permission.POST_NOTIFICATIONS)
+    }
+    return required.filter { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+}
+
+@Composable
+private fun DirectSimApp(
+    resumeTick: Int,
+    onTestSpeak: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var stateRefreshTrigger by remember { mutableIntStateOf(0) }
+
+    // Re-evaluate default dialer & permission state on every resume or launcher return
+    val isDefaultDialer = remember(resumeTick, stateRefreshTrigger) {
+        checkIsDefaultPhoneApp(context)
+    }
+    val missingPermissions = remember(resumeTick, stateRefreshTrigger) {
+        getMissingRuntimePermissions(context)
+    }
+    val notesList = remember(resumeTick, stateRefreshTrigger, selectedTab) {
+        Storage.getCallNotes(context)
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        stateRefreshTrigger++
+    }
+
+    val dialerRoleLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        stateRefreshTrigger++
+        val stillMissing = getMissingRuntimePermissions(context)
+        if (stillMissing.isNotEmpty()) {
+            permissionLauncher.launch(stillMissing.toTypedArray())
+        }
+    }
+
+    fun launchDefaultDialerDropdown() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val roleManager = context.getSystemService(RoleManager::class.java)
+                if (roleManager.isRoleAvailable(RoleManager.ROLE_DIALER) &&
+                    !roleManager.isRoleHeld(RoleManager.ROLE_DIALER)
+                ) {
+                    dialerRoleLauncher.launch(
+                        roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+                    )
+                    return
+                }
+            } else {
+                val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
+                    putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
+                }
+                dialerRoleLauncher.launch(intent)
+                return
+            }
+        } catch (_: Exception) {
+        }
+
+        try {
+            context.startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        } catch (_: Exception) {
+            Toast.makeText(context, "Open Settings > Apps > Default apps > Phone app", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    Scaffold(
+        containerColor = Color(0xFF111113),
+        bottomBar = {
+            NavigationBar(
+                containerColor = Color(0xFF161619),
+                tonalElevation = 0.dp
+            ) {
+                NavigationBarItem(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = {
+                        Text(
+                            text = "●",
+                            fontSize = 14.sp,
+                            color = if (selectedTab == 0) Color(0xFF10B981) else Color(0xFF71717A)
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = "Dashboard",
+                            fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal
+                        )
+                    },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedTextColor = Color(0xFFF4F4F6),
+                        unselectedTextColor = Color(0xFFA1A1AA),
+                        indicatorColor = Color(0xFF242429)
+                    )
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    icon = {
+                        Text(
+                            text = "≡",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (selectedTab == 1) Color(0xFF10B981) else Color(0xFF71717A)
+                        )
+                    },
+                    label = {
+                        val suffix = if (notesList.isNotEmpty()) " (${notesList.size})" else ""
+                        Text(
+                            text = "Call Notes$suffix",
+                            fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal
+                        )
+                    },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedTextColor = Color(0xFFF4F4F6),
+                        unselectedTextColor = Color(0xFFA1A1AA),
+                        indicatorColor = Color(0xFF242429)
+                    )
+                )
+            }
+        }
+    ) { innerPadding ->
+        if (selectedTab == 0) {
+            DashboardScreen(
+                innerPadding = innerPadding,
+                isDefaultDialer = isDefaultDialer,
+                missingPermissions = missingPermissions,
+                onOpenDefaultDialerDropdown = { launchDefaultDialerDropdown() },
+                onRequestPermissions = {
+                    if (missingPermissions.isNotEmpty()) {
+                        permissionLauncher.launch(missingPermissions.toTypedArray())
+                    }
+                },
+                onTestSpeak = onTestSpeak
+            )
+        } else {
+            CallNotesScreen(
+                innerPadding = innerPadding,
+                notes = notesList,
+                onNotesChanged = { stateRefreshTrigger++ }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DashboardScreen(
+    innerPadding: PaddingValues,
+    isDefaultDialer: Boolean,
+    missingPermissions: List<String>,
+    onOpenDefaultDialerDropdown: () -> Unit,
+    onRequestPermissions: () -> Unit,
+    onTestSpeak: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var isAgentOn by remember { mutableStateOf(Storage.isAssistantEnabled(context)) }
+    var greetingText by remember { mutableStateOf(Storage.getGreetingMessage(context)) }
+    var delaySec by remember { mutableIntStateOf(Storage.getAutoAnswerDelaySec(context)) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .imePadding()
+            .padding(
+                start = 20.dp,
+                end = 20.dp,
+                top = 12.dp,
+                bottom = innerPadding.calculateBottomPadding()
+            )
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Header
+        Column {
+            Text(
+                text = "DirectSIM Assistant",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFF4F4F6)
+            )
+            Text(
+                text = "Personal SIM Call Answering Agent",
+                fontSize = 13.sp,
+                color = Color(0xFFA1A1AA)
+            )
+        }
+
+        // Persistent Setup Warning Card: Visible ONLY when Default App or Permissions are not configured
+        if (!isDefaultDialer || missingPermissions.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xFF261C10),
+                border = BorderStroke(1.dp, Color(0xFFD97706)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = if (!isDefaultDialer) {
+                            "Warning: App Not Set as Default Phone App"
+                        } else {
+                            "Warning: Microphone Permission Required"
+                        },
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFBBF24)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = if (!isDefaultDialer) {
+                            "Tap below to open the apps dropdown and select DirectSIM Call Assistant so it can answer incoming calls."
+                        } else {
+                            "Allow microphone permission so the AI assistant can hear callers and speak back."
+                        },
+                        fontSize = 13.sp,
+                        color = Color(0xFFE4E4E7)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            if (!isDefaultDialer) {
+                                onOpenDefaultDialerDropdown()
+                            } else {
+                                onRequestPermissions()
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFD97706),
+                            contentColor = Color(0xFF111113)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Text(
+                            text = if (!isDefaultDialer) {
+                                "SELECT AS DEFAULT PHONE APP"
+                            } else {
+                                "ALLOW MICROPHONE ACCESS"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // Hero Toggle CTA Card
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF1A1A1E),
+            border = BorderStroke(
+                1.dp,
+                if (isAgentOn) Color(0xFF10B981).copy(alpha = 0.5f) else Color(0xFF323238)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = if (isAgentOn) "● AI CALL AGENT ACTIVE" else "● AI CALL AGENT STANDBY",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isAgentOn) Color(0xFF10B981) else Color(0xFFA1A1AA)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = if (isAgentOn) {
+                        "Incoming SIM calls are automatically answered on loudspeaker and saved to Call Notes."
+                    } else {
+                        "Turn ON before stepping away so the assistant picks up incoming calls for you."
+                    },
+                    fontSize = 13.sp,
+                    color = Color(0xFFD4D4D8)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        if (!isAgentOn) {
+                            if (!isDefaultDialer) {
+                                Toast.makeText(
+                                    context,
+                                    "Select DirectSIM Call Assistant in the default apps dropdown first.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                onOpenDefaultDialerDropdown()
+                                return@Button
+                            }
+                            if (missingPermissions.isNotEmpty()) {
+                                onRequestPermissions()
+                                return@Button
+                            }
+                        }
+                        val next = !isAgentOn
+                        Storage.setAssistantEnabled(context, next)
+                        isAgentOn = next
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isAgentOn) Color(0xFFDC2626) else Color(0xFF10B981),
+                        contentColor = if (isAgentOn) Color.White else Color(0xFF0A0A0B)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                ) {
+                    Text(
+                        text = if (isAgentOn) "TURN OFF AI CALL AGENT" else "TURN ON AI CALL AGENT",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Greeting Textarea Card
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF1A1A1E),
+            border = BorderStroke(1.dp, Color(0xFF323238)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "Agent Greeting Message",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF4F4F6)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Spoken aloud to callers as soon as the agent picks up.",
+                    fontSize = 12.sp,
+                    color = Color(0xFFA1A1AA)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = greetingText,
+                    onValueChange = { greetingText = it },
+                    minLines = 3,
+                    maxLines = 5,
+                    placeholder = { Text("Enter greeting message...", color = Color(0xFF71717A)) },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color(0xFFF4F4F6),
+                        unfocusedTextColor = Color(0xFFF4F4F6),
+                        focusedContainerColor = Color(0xFF242429),
+                        unfocusedContainerColor = Color(0xFF242429),
+                        focusedBorderColor = Color(0xFF10B981),
+                        unfocusedBorderColor = Color(0xFF3F3F46)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            val trimmed = greetingText.trim()
+                            if (trimmed.isNotEmpty()) {
+                                Storage.setGreetingMessage(context, trimmed)
+                                Toast.makeText(context, "Greeting saved", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFF4F4F6),
+                            contentColor = Color(0xFF111113)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp)
+                    ) {
+                        Text("SAVE GREETING", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            val trimmed = greetingText.trim()
+                            if (trimmed.isNotEmpty()) {
+                                Storage.setGreetingMessage(context, trimmed)
+                                onTestSpeak(trimmed)
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp)
+                    ) {
+                        Text(
+                            "TEST SPEAKER",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFF4F4F6)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Auto-Answer Delay Selector
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF1A1A1E),
+            border = BorderStroke(1.dp, Color(0xFF323238)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Text(
+                    text = "Auto-Answer Delay",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF4F4F6)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(0 to "Instant (0s)", 2 to "2 Secs", 5 to "5 Secs").forEach { (sec, label) ->
+                        val selected = delaySec == sec
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                delaySec = sec
+                                Storage.setAutoAnswerDelaySec(context, sec)
+                            },
+                            label = {
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFFF4F4F6),
+                                selectedLabelColor = Color(0xFF111113),
+                                containerColor = Color(0xFF242429),
+                                labelColor = Color(0xFFD4D4D8)
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun CallNotesScreen(
+    innerPadding: PaddingValues,
+    notes: List<CallNote>,
+    onNotesChanged: () -> Unit
+) {
+    val context = LocalContext.current
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf("All") }
+    var newestFirst by remember { mutableStateOf(true) }
+
+    val filteredNotes = remember(notes, searchQuery, selectedCategory, newestFirst) {
+        val q = searchQuery.trim().lowercase(Locale.getDefault())
+        notes
+            .filter { selectedCategory == "All" || it.category.equals(selectedCategory, ignoreCase = true) }
+            .filter {
+                q.isEmpty() ||
+                    it.callerNumber.lowercase(Locale.getDefault()).contains(q) ||
+                    it.summary.lowercase(Locale.getDefault()).contains(q) ||
+                    it.transcript.lowercase(Locale.getDefault()).contains(q)
+            }
+            .let { list ->
+                if (newestFirst) list.sortedByDescending { it.timestampMs }
+                else list.sortedBy { it.timestampMs }
+            }
+    }
+
+    val formatter = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(
+                start = 20.dp,
+                end = 20.dp,
+                top = 12.dp,
+                bottom = innerPadding.calculateBottomPadding()
+            )
+    ) {
+        // Header + Sort + Clear All
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Call Notes",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFF4F4F6),
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { newestFirst = !newestFirst }) {
+                Text(
+                    text = if (newestFirst) "Newest ↓" else "Oldest ↑",
+                    color = Color(0xFFD4D4D8),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+            }
+            if (notes.isNotEmpty()) {
+                TextButton(
+                    onClick = {
+                        Storage.clearAllCallNotes(context)
+                        onNotesChanged()
+                        Toast.makeText(context, "All notes cleared", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text(
+                        text = "Clear All",
+                        color = Color(0xFFF87171),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Search Bar
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            singleLine = true,
+            placeholder = { Text("Search number or message...", color = Color(0xFF71717A)) },
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color(0xFFF4F4F6),
+                unfocusedTextColor = Color(0xFFF4F4F6),
+                focusedContainerColor = Color(0xFF1A1A1E),
+                unfocusedContainerColor = Color(0xFF1A1A1E),
+                focusedBorderColor = Color(0xFF10B981),
+                unfocusedBorderColor = Color(0xFF323238)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Category Filter Chips
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(listOf("All", "Urgent", "Callback", "General")) { category ->
+                FilterChip(
+                    selected = selectedCategory == category,
+                    onClick = { selectedCategory = category },
+                    label = { Text(category, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFFF4F4F6),
+                        selectedLabelColor = Color(0xFF111113),
+                        containerColor = Color(0xFF1A1A1E),
+                        labelColor = Color(0xFFD4D4D8)
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        if (filteredNotes.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xFF1A1A1E),
+                border = BorderStroke(1.dp, Color(0xFF323238)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "No Call Notes Found",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFF4F4F6)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Handled calls, caller summaries, and full transcripts will appear here automatically.",
+                        fontSize = 13.sp,
+                        color = Color(0xFFA1A1AA)
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                items(filteredNotes, key = { it.id }) { note ->
+                    val badgeColor = when (note.category) {
+                        "Urgent" -> Color(0xFFF87171)
+                        "Callback" -> Color(0xFFFBBF24)
+                        else -> Color(0xFF34D399)
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color(0xFF1A1A1E),
+                        border = BorderStroke(1.dp, Color(0xFF323238)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = note.callerNumber,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFF4F4F6),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFF242429),
+                                    border = BorderStroke(1.dp, Color(0xFF3F3F46))
+                                ) {
+                                    Text(
+                                        text = note.category.uppercase(Locale.getDefault()),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = badgeColor,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Text(
+                                text = formatter.format(Date(note.timestampMs)),
+                                fontSize = 12.sp,
+                                color = Color(0xFFA1A1AA)
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF141417),
+                                border = BorderStroke(1.dp, Color(0xFF2A2A30)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = note.transcript.ifBlank { note.summary },
+                                    fontSize = 13.sp,
+                                    color = Color(0xFFE4E4E7),
+                                    modifier = Modifier.padding(12.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cb.setPrimaryClip(ClipData.newPlainText("Caller", note.callerNumber))
+                                        Toast.makeText(context, "Copied ${note.callerNumber}", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Copy", fontSize = 12.sp, color = Color(0xFFF4F4F6))
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_DIAL, Uri.parse("tel:${note.callerNumber}"))
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Call Back", fontSize = 12.sp, color = Color(0xFF34D399))
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        Storage.deleteCallNote(context, note.id)
+                                        onNotesChanged()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Delete", fontSize = 12.sp, color = Color(0xFFF87171))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
