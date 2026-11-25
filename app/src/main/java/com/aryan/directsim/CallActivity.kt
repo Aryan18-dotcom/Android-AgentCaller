@@ -1,5 +1,6 @@
 package com.aryan.directsim
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -21,11 +22,10 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 import java.util.Locale
 import java.util.concurrent.Executors
 
-class CallActivity : AppCompatActivity() {
+class CallActivity : Activity() {
 
     companion object {
         private const val TAG = "CallActivity"
@@ -51,17 +51,21 @@ class CallActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         instance = this
 
-        // Keep screen awake and visible over lockscreen during the call
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         buildUi()
 
-        // Lock audio route to speaker immediately
         AssistantInCallService.instance?.forceSpeakerphone()
         initSpeechRecognizer()
         initTextToSpeech()
@@ -141,14 +145,12 @@ class CallActivity : AppCompatActivity() {
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
 
-                // Use USAGE_MEDIA + CONTENT_TYPE_SPEECH so telephony AEC doesn't mute it
                 val attrs = AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
                 tts?.setAudioAttributes(attrs)
 
-                // Slight pitch & rate shift prevents acoustic echo canceler suppression
                 tts?.setSpeechRate(0.95f)
                 tts?.setPitch(1.08f)
 
@@ -163,7 +165,6 @@ class CallActivity : AppCompatActivity() {
 
                     override fun onDone(utteranceId: String?) {
                         isAgentSpeaking = false
-                        // Wait 400ms for speaker room reverb to fade before opening mic
                         mainHandler.postDelayed({
                             if (isCallActive) {
                                 AssistantInCallService.instance?.forceSpeakerphone()
@@ -196,7 +197,6 @@ class CallActivity : AppCompatActivity() {
     private fun speakToCaller(message: String) {
         if (!isTtsReady || !isCallActive) return
 
-        // Re-lock speaker route & maximize media volume before every utterance
         AssistantInCallService.instance?.forceSpeakerphone()
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         @Suppress("DEPRECATION")
@@ -298,10 +298,6 @@ class CallActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Replace the body of this method with your existing LLM HTTP request (Groq / Gemini / OpenAI)
-     * using Storage.getApiKey(this) and Storage.getSystemPrompt(this).
-     */
     private fun generateAgentReply(callerSpeech: String): String {
         val lower = callerSpeech.lowercase(Locale.getDefault())
         return when {

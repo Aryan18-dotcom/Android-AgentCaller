@@ -1,6 +1,7 @@
 package com.aryan.directsim
 
 import android.Manifest
+import android.app.Activity
 import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
@@ -19,27 +20,17 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import java.util.Locale
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
+
+    companion object {
+        private const val REQ_PERMISSIONS = 1001
+        private const val REQ_DIALER_ROLE = 1002
+    }
 
     private var testTts: TextToSpeech? = null
     private lateinit var roleStatusText: TextView
-
-    private val roleRequestLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        updateRoleStatus()
-    }
-
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        updateRoleStatus()
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -201,10 +192,10 @@ class MainActivity : AppCompatActivity() {
             perms.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         val missing = perms.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isNotEmpty()) {
-            permissionLauncher.launch(missing.toTypedArray())
+            requestPermissions(missing.toTypedArray(), REQ_PERMISSIONS)
         }
     }
 
@@ -214,13 +205,38 @@ class MainActivity : AppCompatActivity() {
             if (roleManager.isRoleAvailable(RoleManager.ROLE_DIALER) &&
                 !roleManager.isRoleHeld(RoleManager.ROLE_DIALER)
             ) {
-                roleRequestLauncher.launch(roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER))
+                @Suppress("DEPRECATION")
+                startActivityForResult(
+                    roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER),
+                    REQ_DIALER_ROLE
+                )
             }
         } else {
             val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
                 putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, packageName)
             }
-            roleRequestLauncher.launch(intent)
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQ_DIALER_ROLE)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_DIALER_ROLE) {
+            updateRoleStatus()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_PERMISSIONS) {
+            updateRoleStatus()
         }
     }
 
