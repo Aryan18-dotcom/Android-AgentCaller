@@ -38,6 +38,21 @@ jobs:
       - name: Install Android SDK platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
+      - name: Validate Android Manifest
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          path = "app/src/main/AndroidManifest.xml"
+
+          try:
+              ET.parse(path)
+              print("SUCCESS: AndroidManifest.xml is valid XML")
+          except ET.ParseError as error:
+              print(f"MANIFEST ERROR: {error}")
+              raise
+          PY
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
 
