@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
                         }
 
                         Text("Notes & reminders", color = Color.White, style = MaterialTheme.typography.titleLarge)
-                        val entries = remember(refresh) { Storage.all(this) }
+                        val entries = remember(refresh) {     Storage.all(this@MainActivity) }
                         if (entries.isEmpty()) Text("No notes or reminders saved yet.", color = Color.LightGray)
                         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(entries) { entry ->
