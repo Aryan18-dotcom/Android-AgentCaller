@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.os.Build
@@ -16,7 +18,9 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -38,14 +42,20 @@ class CallActivity : Activity() {
 
     private lateinit var statusText: TextView
     private lateinit var transcriptText: TextView
+    private lateinit var transcriptScroll: ScrollView
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bgExecutor = Executors.newSingleThreadExecutor()
+
+    private var callerNumber: String = "Unknown Caller"
+    private val transcriptLines = mutableListOf<String>()
+    private val callerUtterances = mutableListOf<String>()
 
     private var isTtsReady = false
     private var isAgentSpeaking = false
     private var isCallActive = true
     private var hasSpokenGreeting = false
+    private var hasSavedNote = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,6 +73,7 @@ class CallActivity : Activity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        callerNumber = intent.getStringExtra("CALLER_NUMBER") ?: "Unknown Caller"
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         buildUi()
 
@@ -71,70 +82,133 @@ class CallActivity : Activity() {
         initTextToSpeech()
     }
 
-    private fun buildUi() {
-        val caller = intent.getStringExtra("CALLER_NUMBER") ?: "Incoming Call"
+    private fun dp(value: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            value.toFloat(),
+            resources.displayMetrics
+        ).toInt()
+    }
 
+    private fun roundedBg(fillHex: String, strokeHex: String? = null, radiusDp: Int = 16): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(radiusDp).toFloat()
+            setColor(Color.parseColor(fillHex))
+            if (strokeHex != null) {
+                setStroke(dp(1), Color.parseColor(strokeHex))
+            }
+        }
+    }
+
+    private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#171717"))
-            setPadding(48, 64, 48, 64)
+            setBackgroundColor(Color.parseColor("#121212"))
+            setPadding(dp(20), dp(24), dp(20), dp(24))
+        }
+
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val topInset: Int
+            val bottomInset: Int
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val sys = insets.getInsets(WindowInsets.Type.systemBars())
+                topInset = sys.top
+                bottomInset = sys.bottom
+            } else {
+                @Suppress("DEPRECATION")
+                topInset = insets.systemWindowInsetTop
+                @Suppress("DEPRECATION")
+                bottomInset = insets.systemWindowInsetBottom
+            }
+            v.setPadding(dp(20), topInset + dp(16), dp(20), bottomInset + dp(16))
+            insets
+        }
+
+        val headerCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg("#1E1E1E", "#383838", 18)
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+        }
+
+        val badge = TextView(this).apply {
+            text = "LIVE CALL • SPEAKER COUPLING ACTIVE"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#10B981"))
+            gravity = Gravity.CENTER
         }
 
         val header = TextView(this).apply {
-            text = "AI Call Assistant Active\n$caller"
-            textSize = 20f
-            setTextColor(Color.WHITE)
+            text = callerNumber
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#F5F5F5"))
             gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(6))
         }
 
         statusText = TextView(this).apply {
-            text = "Initializing speaker & voice engine..."
+            text = "Initializing loudspeaker & voice engine..."
             textSize = 14f
-            setTextColor(Color.parseColor("#34D399"))
+            setTextColor(Color.parseColor("#A3A3A3"))
             gravity = Gravity.CENTER
-            setPadding(0, 24, 0, 24)
         }
 
-        val scrollView = ScrollView(this).apply {
+        headerCard.addView(badge)
+        headerCard.addView(header)
+        headerCard.addView(statusText)
+
+        transcriptScroll = ScrollView(this).apply {
+            background = roundedBg("#181818", "#2E2E2E", 16)
+            setPadding(dp(16), dp(16), dp(16), dp(16))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
                 1f
-            )
+            ).apply {
+                topMargin = dp(16)
+                bottomMargin = dp(16)
+            }
         }
 
         transcriptText = TextView(this).apply {
             text = ""
             textSize = 15f
+            setLineSpacing(dp(4).toFloat(), 1f)
             setTextColor(Color.parseColor("#E5E5E5"))
         }
-        scrollView.addView(transcriptText)
+        transcriptScroll.addView(transcriptText)
 
         val takeoverBtn = Button(this).apply {
-            text = "Take Over Call (Turn Off Agent)"
-            setBackgroundColor(Color.parseColor("#2563EB"))
-            setTextColor(Color.WHITE)
+            text = "TAKE OVER CALL MANUALLY"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            background = roundedBg("#262626", "#525252", 14)
+            setTextColor(Color.parseColor("#F5F5F5"))
+            setPadding(dp(16), dp(16), dp(16), dp(16))
             setOnClickListener { takeOverCallManually() }
         }
 
         val endBtn = Button(this).apply {
-            text = "Hang Up Call"
-            setBackgroundColor(Color.parseColor("#DC2626"))
+            text = "END CALL & SAVE NOTE"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            background = roundedBg("#DC2626", null, 14)
             setTextColor(Color.WHITE)
-            val params = LinearLayout.LayoutParams(
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 24 }
-            layoutParams = params
+            ).apply { topMargin = dp(12) }
             setOnClickListener {
                 AssistantInCallService.instance?.hangUpActiveCall()
                 onCallEnded()
             }
         }
 
-        root.addView(header)
-        root.addView(statusText)
-        root.addView(scrollView)
+        root.addView(headerCard)
+        root.addView(transcriptScroll)
         root.addView(takeoverBtn)
         root.addView(endBtn)
         setContentView(root)
@@ -160,6 +234,7 @@ class CallActivity : Activity() {
                         mainHandler.post {
                             stopListening()
                             statusText.text = "Agent speaking to caller..."
+                            statusText.setTextColor(Color.parseColor("#10B981"))
                         }
                     }
 
@@ -189,7 +264,7 @@ class CallActivity : Activity() {
                 }
             } else {
                 Log.e(TAG, "TTS initialization failed with status: $status")
-                statusText.text = "TTS init failed. Check device TTS engine."
+                statusText.text = "TTS engine error (code $status)."
             }
         }
     }
@@ -225,6 +300,7 @@ class CallActivity : Activity() {
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     statusText.text = "Listening to caller..."
+                    statusText.setTextColor(Color.parseColor("#F59E0B"))
                 }
 
                 override fun onBeginningOfSpeech() {
@@ -235,7 +311,7 @@ class CallActivity : Activity() {
                 override fun onBufferReceived(buffer: ByteArray?) {}
 
                 override fun onEndOfSpeech() {
-                    statusText.text = "Processing caller message..."
+                    statusText.text = "Processing reply..."
                 }
 
                 override fun onError(error: Int) {
@@ -250,6 +326,7 @@ class CallActivity : Activity() {
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val spokenText = matches?.firstOrNull()?.trim().orEmpty()
                     if (spokenText.isNotEmpty() && isCallActive && !isAgentSpeaking) {
+                        callerUtterances.add(spokenText)
                         appendTranscript("Caller: $spokenText")
                         processCallerInput(spokenText)
                     } else if (isCallActive && !isAgentSpeaking) {
@@ -287,7 +364,7 @@ class CallActivity : Activity() {
     }
 
     private fun processCallerInput(callerSpeech: String) {
-        statusText.text = "Thinking..."
+        statusText.text = "Generating response..."
         bgExecutor.execute {
             val reply = generateAgentReply(callerSpeech)
             mainHandler.post {
@@ -301,19 +378,51 @@ class CallActivity : Activity() {
     private fun generateAgentReply(callerSpeech: String): String {
         val lower = callerSpeech.lowercase(Locale.getDefault())
         return when {
-            "urgent" in lower || "emergency" in lower ->
+            "urgent" in lower || "emergency" in lower || "asap" in lower ->
                 "Understood, I will alert Aryan immediately that this is urgent."
             "callback" in lower || "call back" in lower || "message" in lower ->
-                "Got it. I have noted your message and will ask Aryan to call you back as soon as possible."
+                "Got it. I have noted your message and will ask Aryan to call you back shortly."
             "bye" in lower || "thank" in lower ->
                 "You are welcome. Have a great day!"
             else ->
-                "Got it, you said: $callerSpeech. Should I pass any specific message along to Aryan?"
+                "Got it, you said: $callerSpeech. Is there anything else you want me to note down for Aryan?"
         }
+    }
+
+    private fun persistNoteIfNeeded() {
+        if (hasSavedNote) return
+        hasSavedNote = true
+        if (transcriptLines.isEmpty()) return
+
+        val joinedCaller = callerUtterances.joinToString(" | ")
+        val lower = joinedCaller.lowercase(Locale.getDefault())
+        val category = when {
+            "urgent" in lower || "emergency" in lower || "asap" in lower -> "Urgent"
+            "callback" in lower || "call back" in lower || "message" in lower -> "Callback"
+            else -> "General"
+        }
+        val summary = if (joinedCaller.isNotBlank()) {
+            joinedCaller.take(140)
+        } else {
+            "Greeting played; caller did not leave a voice message."
+        }
+
+        Storage.saveCallNote(
+            this,
+            CallNote(
+                id = System.currentTimeMillis(),
+                callerNumber = callerNumber,
+                timestampMs = System.currentTimeMillis(),
+                category = category,
+                summary = summary,
+                transcript = transcriptLines.joinToString("\n\n")
+            )
+        )
     }
 
     private fun takeOverCallManually() {
         isCallActive = false
+        persistNoteIfNeeded()
         stopListening()
         tts?.stop()
         Storage.setAssistantEnabled(this, false)
@@ -324,6 +433,7 @@ class CallActivity : Activity() {
     fun onCallEnded() {
         if (!isCallActive) return
         isCallActive = false
+        persistNoteIfNeeded()
         mainHandler.post {
             stopListening()
             tts?.stop()
@@ -332,11 +442,16 @@ class CallActivity : Activity() {
     }
 
     private fun appendTranscript(line: String) {
+        transcriptLines.add(line)
         transcriptText.append("$line\n\n")
+        transcriptScroll.post {
+            transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN)
+        }
     }
 
     override fun onDestroy() {
         isCallActive = false
+        persistNoteIfNeeded()
         instance = null
         stopListening()
         speechRecognizer?.destroy()
