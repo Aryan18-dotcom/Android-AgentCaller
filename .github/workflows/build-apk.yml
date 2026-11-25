@@ -1,8 +1,10 @@
-name: Build Android APK
+name: Build Direct-SIM APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    paths:
+      - 'DirectSIMCallAssistant-Experimental-v0.1.zip'
+      - '.github/workflows/build-apk.yml'
 permissions:
   contents: read
 jobs:
@@ -10,6 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Unpack Android project
+        run: |
+          unzip DirectSIMCallAssistant-Experimental-v0.1.zip -d project
+          test -f project/DirectSIMCallAssistant/app/build.gradle.kts
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -21,9 +27,10 @@ jobs:
       - name: Install Android SDK platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Build debug APK
+        working-directory: project/DirectSIMCallAssistant
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: Personal-Call-Assistant-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: project/DirectSIMCallAssistant/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
